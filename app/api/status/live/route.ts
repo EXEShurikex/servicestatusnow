@@ -1,4 +1,3 @@
-// app/api/status/live/route.ts
 import { NextResponse } from 'next/server'
 import { fetchAllStatuses, STATUS_PAGE_SOURCES } from '@/lib/status-checker'
 
