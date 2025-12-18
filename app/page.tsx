@@ -18,11 +18,73 @@ export const metadata: Metadata = {
 
 export const revalidate = 60
 
+function normalizeStatus(status: any): string {
+  if (!status) return 'unknown'
+  const s = String(status).toLowerCase()
+
+  // If your API returns these exact values, pass through
+  if (['operational', 'degraded', 'outage', 'maintenance', 'unknown'].includes(s)) return s
+
+  // Otherwise normalize common words
+  if (s.includes('operational') || s === 'ok' || s === 'up') return 'operational'
+  if (s.includes('degraded') || s.includes('minor') || s.includes('partial')) return 'degraded'
+  if (s.includes('outage') || s.includes('major') || s.includes('down') || s.includes('offline')) return 'outage'
+  if (s.includes('maintenance')) return 'maintenance'
+  return 'unknown'
+}
+
+function statusLabel(status: any): string {
+  const s = normalizeStatus(status)
+  if (s === 'operational') return 'Operational'
+  if (s === 'degraded') return 'Degraded'
+  if (s === 'outage') return 'Outage'
+  if (s === 'maintenance') return 'Maintenance'
+  return 'Unknown'
+}
+
+function dotColorClass(status: any): string {
+  const s = normalizeStatus(status)
+  if (s === 'operational') return 'bg-green-500'
+  if (s === 'degraded') return 'bg-yellow-500'
+  if (s === 'outage') return 'bg-red-500'
+  if (s === 'maintenance') return 'bg-blue-500'
+  return 'bg-gray-500'
+}
+
+function dotShadow(status: any): string {
+  const s = normalizeStatus(status)
+  if (s === 'operational') return '0 0 8px #22c55e'
+  if (s === 'degraded') return '0 0 8px #eab308'
+  if (s === 'outage') return '0 0 8px #ef4444'
+  if (s === 'maintenance') return '0 0 8px #3b82f6'
+  return '0 0 8px #6b7280'
+}
+
 export default async function Home() {
-  const [mostChecked, trending] = await Promise.all([
+  const [mostCheckedRaw, trendingRaw, liveStatusesRaw] = await Promise.all([
     getMostCheckedServices(12),
     getTrendingServices(12),
+    fetchLiveStatuses().catch(() => ({} as Record<string, string>)),
   ])
+
+  const liveStatuses: Record<string, string> = (liveStatusesRaw as any) || {}
+
+  // Merge live status into the services your cards already render
+  const mostChecked = (mostCheckedRaw || []).map((service: any) => {
+    const live = liveStatuses?.[service.slug]
+    return {
+      ...service,
+      status: live ? normalizeStatus(live) : service.status,
+    }
+  })
+
+  const trending = (trendingRaw || []).map((service: any) => {
+    const live = liveStatuses?.[service.slug]
+    return {
+      ...service,
+      status: live ? normalizeStatus(live) : service.status,
+    }
+  })
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -39,6 +101,21 @@ export default async function Home() {
       'query-input': 'required name=search_term_string',
     },
   }
+
+  // Keep your exact ticker vibe, but use live status when we can.
+  // If a slug isn't in liveStatuses, it falls back to your original label/color.
+  const tickerItems = [
+    { slug: 'netflix', name: 'Netflix', fallback: 'operational', delay: '0s' },
+    { slug: 'discord', name: 'Discord', fallback: 'degraded', delay: '0.5s' },
+    { slug: 'aws', name: 'AWS', fallback: 'operational', delay: '1s' },
+    { slug: 'xbox', name: 'Xbox Live', fallback: 'outage', delay: '1.5s' },
+    { slug: 'google', name: 'Google', fallback: 'operational', delay: '2s' },
+    { slug: 'spotify', name: 'Spotify', fallback: 'operational', delay: '2.5s' },
+  ].map((item) => {
+    const live = liveStatuses?.[item.slug]
+    const status = live ? normalizeStatus(live) : normalizeStatus(item.fallback)
+    return { ...item, status }
+  })
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] flex flex-col">
@@ -301,23 +378,25 @@ export default async function Home() {
           animation: line-pulse 4s ease-in-out infinite;
         }
       `}} />
-      
+
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+
       <Header />
+
       <main className="flex-1">
         {/* HERO SECTION */}
         <div className="relative overflow-hidden min-h-[650px] sm:min-h-[750px] flex items-center bg-[#0a0a0f]">
-          
+
           {/* Grid background */}
           <div className="absolute inset-0 grid-bg" />
-          
+
           {/* Gradient orbs */}
           <div className="gradient-orb absolute top-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-blue-500/10 blur-[120px]" />
           <div className="gradient-orb absolute bottom-[-30%] left-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/5 blur-[100px]" style={{ animationDelay: '-5s' }} />
-          
+
           {/* Floating particles */}
           <div className="absolute inset-0 overflow-hidden pointer-events-none">
             {[...Array(15)].map((_, i) => (
@@ -332,50 +411,50 @@ export default async function Home() {
               />
             ))}
           </div>
-          
+
           {/* Radar element */}
           <div className="absolute right-[5%] top-1/2 -translate-y-1/2 w-[300px] h-[300px] sm:w-[400px] sm:h-[400px] opacity-30 pointer-events-none hidden lg:block">
             <div className="absolute inset-0 rounded-full border border-blue-500/20" />
             <div className="absolute inset-[15%] rounded-full border border-blue-500/30" />
             <div className="absolute inset-[30%] rounded-full border border-blue-500/40" />
             <div className="absolute inset-[45%] rounded-full border border-blue-500/50" />
-            
+
             <div className="absolute inset-[48%] rounded-full bg-blue-500" style={{ boxShadow: '0 0 20px #3b82f6, 0 0 40px #3b82f6' }} />
-            
+
             <div className="radar-ping absolute inset-[45%] rounded-full border-2 border-blue-400" />
             <div className="radar-ping radar-ping-delay-1 absolute inset-[45%] rounded-full border-2 border-blue-400" />
             <div className="radar-ping radar-ping-delay-2 absolute inset-[45%] rounded-full border-2 border-blue-400" />
-            
+
             <div className="radar-sweep absolute inset-0" style={{ transformOrigin: 'center center' }}>
               <div className="absolute top-1/2 left-1/2 w-1/2 h-[2px] origin-left bg-gradient-to-r from-blue-400 to-transparent" />
             </div>
-            
+
             <div className="node-appear absolute top-[20%] left-[60%] w-2 h-2 bg-green-500 rounded-full" style={{ animationDelay: '1s', boxShadow: '0 0 10px #22c55e' }} />
             <div className="node-appear absolute top-[40%] left-[25%] w-2 h-2 bg-green-500 rounded-full" style={{ animationDelay: '1.5s', boxShadow: '0 0 10px #22c55e' }} />
             <div className="node-appear absolute top-[70%] left-[55%] w-2 h-2 bg-yellow-500 rounded-full" style={{ animationDelay: '2s', boxShadow: '0 0 10px #eab308' }} />
             <div className="node-appear absolute top-[55%] left-[75%] w-2 h-2 bg-green-500 rounded-full" style={{ animationDelay: '2.5s', boxShadow: '0 0 10px #22c55e' }} />
           </div>
-          
+
           {/* Main content */}
           <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center py-16 lg:text-left lg:ml-[10%]">
-            
+
             {/* HEADLINE - Clean, bold, readable */}
-            <h1 
+            <h1
               className="fade-in-up text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight"
               style={{ fontFamily: 'Poppins, sans-serif' }}
             >
               Check If A Website Or App Is{' '}
               <span className="shimmer-text">Down Right Now</span>
             </h1>
-            
+
             {/* SUBTITLE */}
-            <p 
+            <p
               className="fade-in-up-delay-1 text-lg sm:text-xl text-gray-400 max-w-xl mb-10 lg:mx-0 mx-auto"
               style={{ fontFamily: 'Poppins, sans-serif', fontWeight: 400 }}
             >
               Real-time outage detection & live status updates for thousands of services worldwide.
             </p>
-            
+
             {/* Search bar */}
             <div className="fade-in-up-delay-2 max-w-xl mx-auto lg:mx-0 relative">
               <div className="search-glow absolute -inset-[1px] rounded-xl bg-blue-500/20" />
@@ -383,59 +462,46 @@ export default async function Home() {
                 <SearchBar size="lg" placeholder="Search for a service (e.g., Twitter, Gmail, Netflix)..." />
               </div>
             </div>
-            
+
             {/* Status ticker */}
             <div className="fade-in-up-delay-3 mt-8 overflow-hidden max-w-xl mx-auto lg:mx-0">
               <div className="ticker-scroll flex gap-8 whitespace-nowrap" style={{ width: 'max-content' }}>
                 {[...Array(2)].map((_, setIndex) => (
                   <div key={setIndex} className="flex gap-8">
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Netflix: Operational</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-yellow-500 rounded-full" style={{ boxShadow: '0 0 8px #eab308', animationDelay: '0.5s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Discord: Degraded</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: '1s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>AWS: Operational</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-red-500 rounded-full" style={{ boxShadow: '0 0 8px #ef4444', animationDelay: '1.5s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Xbox Live: Outage</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: '2s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Google: Operational</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: '2.5s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Spotify: Operational</span>
-                    </div>
+                    {tickerItems.map((item, i) => (
+                      <div key={`${item.slug}-${setIndex}`} className="flex items-center gap-2">
+                        <span
+                          className={`dot-pulse w-2 h-2 ${dotColorClass(item.status)} rounded-full`}
+                          style={{ boxShadow: dotShadow(item.status), animationDelay: item.delay }}
+                        />
+                        <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>
+                          {item.name}: {statusLabel(item.status)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
             </div>
           </div>
-          
+
           {/* Network Mesh at bottom */}
           <div className="absolute bottom-0 left-0 right-0 h-[180px] overflow-hidden pointer-events-none">
-            <svg 
-              className="absolute bottom-0 w-full h-full" 
-              viewBox="0 0 1200 180" 
+            <svg
+              className="absolute bottom-0 w-full h-full"
+              viewBox="0 0 1200 180"
               preserveAspectRatio="xMidYMax slice"
             >
               <defs>
                 <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                  <feGaussianBlur stdDeviation="3" result="coloredBlur" />
                   <feMerge>
-                    <feMergeNode in="coloredBlur"/>
-                    <feMergeNode in="SourceGraphic"/>
+                    <feMergeNode in="coloredBlur" />
+                    <feMergeNode in="SourceGraphic" />
                   </feMerge>
                 </filter>
               </defs>
-              
+
               <g className="connection-line">
                 <line x1="50" y1="150" x2="200" y2="130" stroke="#3b82f6" strokeWidth="1" opacity="0.2" />
                 <line x1="200" y1="130" x2="350" y2="145" stroke="#3b82f6" strokeWidth="1" opacity="0.2" />
@@ -444,13 +510,13 @@ export default async function Home() {
                 <line x1="650" y1="140" x2="800" y2="120" stroke="#3b82f6" strokeWidth="1" opacity="0.2" />
                 <line x1="800" y1="120" x2="950" y2="135" stroke="#3b82f6" strokeWidth="1" opacity="0.2" />
                 <line x1="950" y1="135" x2="1100" y2="125" stroke="#3b82f6" strokeWidth="1" opacity="0.2" />
-                
+
                 <line x1="200" y1="130" x2="350" y2="165" stroke="#3b82f6" strokeWidth="1" opacity="0.15" />
                 <line x1="350" y1="145" x2="500" y2="170" stroke="#3b82f6" strokeWidth="1" opacity="0.15" />
                 <line x1="500" y1="125" x2="650" y2="160" stroke="#3b82f6" strokeWidth="1" opacity="0.15" />
                 <line x1="650" y1="140" x2="800" y2="165" stroke="#3b82f6" strokeWidth="1" opacity="0.15" />
                 <line x1="800" y1="120" x2="950" y2="155" stroke="#3b82f6" strokeWidth="1" opacity="0.15" />
-                
+
                 <line x1="100" y1="170" x2="250" y2="165" stroke="#3b82f6" strokeWidth="1" opacity="0.1" />
                 <line x1="250" y1="165" x2="400" y2="175" stroke="#3b82f6" strokeWidth="1" opacity="0.1" />
                 <line x1="400" y1="175" x2="550" y2="165" stroke="#3b82f6" strokeWidth="1" opacity="0.1" />
@@ -458,7 +524,7 @@ export default async function Home() {
                 <line x1="700" y1="175" x2="850" y2="165" stroke="#3b82f6" strokeWidth="1" opacity="0.1" />
                 <line x1="850" y1="165" x2="1000" y2="175" stroke="#3b82f6" strokeWidth="1" opacity="0.1" />
               </g>
-              
+
               <g filter="url(#glow)">
                 <circle className="network-node" cx="50" cy="150" r="4" fill="#3b82f6" style={{ animationDelay: '0s' }} />
                 <circle className="network-node" cx="200" cy="130" r="5" fill="#22c55e" style={{ animationDelay: '0.3s' }} />
@@ -470,7 +536,7 @@ export default async function Home() {
                 <circle className="network-node" cx="1100" cy="125" r="5" fill="#22c55e" style={{ animationDelay: '2.1s' }} />
                 <circle className="network-node" cx="1150" cy="145" r="4" fill="#3b82f6" style={{ animationDelay: '2.4s' }} />
               </g>
-              
+
               <g filter="url(#glow)" opacity="0.6">
                 <circle className="network-node" cx="100" cy="170" r="3" fill="#3b82f6" style={{ animationDelay: '0.2s' }} />
                 <circle className="network-node" cx="250" cy="165" r="3" fill="#3b82f6" style={{ animationDelay: '0.5s' }} />
@@ -480,64 +546,64 @@ export default async function Home() {
                 <circle className="network-node" cx="850" cy="165" r="4" fill="#ef4444" style={{ animationDelay: '1.7s' }} />
                 <circle className="network-node" cx="1000" cy="175" r="3" fill="#3b82f6" style={{ animationDelay: '2s' }} />
               </g>
-              
-              <circle 
-                className="data-packet" 
-                r="3" 
+
+              <circle
+                className="data-packet"
+                r="3"
                 fill="#60a5fa"
-                style={{ 
+                style={{
                   offsetPath: 'path("M0,140 Q300,100 600,130 Q900,160 1200,120")',
                   '--travel-time': '6s',
                   '--travel-delay': '0s'
                 } as React.CSSProperties}
               />
-              <circle 
-                className="data-packet" 
-                r="2" 
+              <circle
+                className="data-packet"
+                r="2"
                 fill="#60a5fa"
-                style={{ 
+                style={{
                   offsetPath: 'path("M0,160 Q400,120 800,150 Q1000,170 1200,140")',
                   '--travel-time': '8s',
                   '--travel-delay': '2s'
                 } as React.CSSProperties}
               />
-              <circle 
-                className="data-packet" 
-                r="2.5" 
+              <circle
+                className="data-packet"
+                r="2.5"
                 fill="#60a5fa"
-                style={{ 
+                style={{
                   offsetPath: 'path("M1200,130 Q900,100 600,140 Q300,170 0,150")',
                   '--travel-time': '7s',
                   '--travel-delay': '4s'
                 } as React.CSSProperties}
               />
             </svg>
-            
+
             <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-[#0a0a0f] to-transparent" />
           </div>
-          
+
           <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-[#0a0a0f] to-transparent" />
         </div>
-        
+
         {/* Trust section */}
         <div className="bg-[#0a0a0f] relative z-10 -mt-4">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="bg-[#12121a] border border-blue-500/10 rounded-2xl p-8 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-[200px] h-[200px] bg-blue-500/5 blur-[80px] rounded-full" />
-              
-              <h2 
+
+              <h2
                 className="text-lg font-semibold text-blue-400 mb-3 relative"
                 style={{ fontFamily: 'Poppins, sans-serif' }}
               >
                 Real-time outage radar — not guesswork
               </h2>
-              <p 
+              <p
                 className="text-gray-400 relative leading-relaxed"
                 style={{ fontFamily: 'Poppins, sans-serif' }}
               >
                 We detect service issues using a combination of live connectivity checks, activity patterns, and user reports. This helps surface problems as they happen — often before traditional outage trackers catch them.
               </p>
-              <p 
+              <p
                 className="mt-3 text-sm text-gray-500 relative"
                 style={{ fontFamily: 'Poppins, sans-serif' }}
               >
@@ -551,7 +617,7 @@ export default async function Home() {
         <div className="bg-[#0a0a0f]">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
             <section className="mb-16">
-              <h2 
+              <h2
                 className="text-2xl sm:text-3xl font-semibold text-white mb-8"
                 style={{ fontFamily: 'Poppins, sans-serif' }}
               >
@@ -561,7 +627,7 @@ export default async function Home() {
                 <p className="text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Loading services...</p>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {mostChecked.map((service) => (
+                  {mostChecked.map((service: any) => (
                     <ServiceCard key={service.id} service={service} />
                   ))}
                 </div>
@@ -569,7 +635,7 @@ export default async function Home() {
             </section>
 
             <section>
-              <h2 
+              <h2
                 className="text-2xl sm:text-3xl font-semibold text-white mb-8"
                 style={{ fontFamily: 'Poppins, sans-serif' }}
               >
@@ -582,7 +648,7 @@ export default async function Home() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {trending.map((service) => (
+                  {trending.map((service: any) => (
                     <ServiceCard key={service.id} service={service} showTrend={true} />
                   ))}
                 </div>
@@ -591,6 +657,7 @@ export default async function Home() {
           </div>
         </div>
       </main>
+
       <Footer />
     </div>
   )
