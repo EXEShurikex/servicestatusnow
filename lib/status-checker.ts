@@ -1,202 +1,433 @@
 // lib/status-checker.ts
+// ServiceStatusNow - Live status checker utilities
+// Next.js App Router safe (runs on server). No DOM APIs.
 
-export interface LiveStatusResult {
+export type ServiceStatus =
+  | "operational"
+  | "degraded"
+  | "partial_outage"
+  | "major_outage"
+  | "maintenance"
+  | "unknown";
+
+export type StatusResult = {
   service: string;
-  status: 'operational' | 'degraded' | 'outage' | 'maintenance' | 'unknown';
-  lastChecked: Date;
-  message?: string;
-  source: 'official' | 'reports';
+  status: ServiceStatus;
+  source: "official" | "unknown";
+  statusPageUrl: string;
+  httpStatus?: number;
+  lastChecked: string;
+  details?: string;
+};
+
+export const STATUS_PAGE_SOURCES: Record<string, string> = {
+  discord: "https://discordstatus.com",
+  github: "https://www.githubstatus.com",
+  cloudflare: "https://www.cloudflarestatus.com",
+  twitch: "https://status.twitch.tv",
+  reddit: "https://www.redditstatus.com",
+  dropbox: "https://status.dropbox.com",
+  vercel: "https://www.vercel-status.com",
+  netlify: "https://www.netlifystatus.com",
+  notion: "https://status.notion.so",
+  figma: "https://status.figma.com",
+  zoom: "https://status.zoom.us",
+  stripe: "https://status.stripe.com",
+};
+
+type Provider =
+  | "atlassian_statuspage"
+  | "instatus"
+  | "betterstack"
+  | "cachet"
+  | "statusio"
+  | "unknown";
+
+const DEFAULT_TIMEOUT_MS = 8000;
+const MAX_CONCURRENCY = 6;
+
+/**
+ * Public: fetch all configured slugs -> status string.
+ * This is what your route.ts is calling.
+ */
+export async function fetchAllStatuses(): Promise<Record<string, ServiceStatus>> {
+  const entries = Object.entries(STATUS_PAGE_SOURCES);
+
+  const results = await mapWithConcurrency(entries, MAX_CONCURRENCY, async ([slug, url]) => {
+    const res = await checkLiveStatus(slug, url);
+    return [slug, res.status] as const;
+  });
+
+  return Object.fromEntries(results);
 }
 
 /**
- * Fetch live status from official status pages
- * Supports common status page formats: Statuspage.io, custom APIs, RSS feeds
+ * Public: check one service by name + status page URL.
+ * Returns normalized status + metadata.
  */
-export async function checkLiveStatus(
-  serviceName: string,
-  statusPageUrl?: string
-): Promise<LiveStatusResult> {
-  
-  // Default to 'unknown' if no status page configured
-  if (!statusPageUrl) {
+export async function checkLiveStatus(serviceName: string, statusPageUrl: string): Promise<StatusResult> {
+  const lastChecked = new Date().toISOString();
+
+  if (!statusPageUrl || typeof statusPageUrl !== "string") {
     return {
       service: serviceName,
-      status: 'unknown',
-      lastChecked: new Date(),
-      source: 'reports'
+      status: "unknown",
+      source: "unknown",
+      statusPageUrl: statusPageUrl || "",
+      lastChecked,
+      details: "Missing status page URL",
     };
   }
 
+  const provider = detectProvider(statusPageUrl);
+
+  // Try provider-specific JSON endpoints first (most reliable).
   try {
-    // Detect status page type and fetch accordingly
-    if (statusPageUrl.includes('status.')) {
-      return await checkStatuspageIo(serviceName, statusPageUrl);
-    } else if (statusPageUrl.endsWith('.json')) {
-      return await checkJsonApi(serviceName, statusPageUrl);
-    } else {
-      return await checkGenericPage(serviceName, statusPageUrl);
-    }
-  } catch (error) {
-    console.error(`Error checking ${serviceName}:`, error);
+    const jsonResult = await tryProviderJson(provider, statusPageUrl, serviceName);
+    if (jsonResult) return jsonResult;
+  } catch {
+    // fall through to HTML heuristic
+  }
+
+  // Fallback: fetch HTML and use keyword heuristics.
+  try {
+    const html = await safeFetchText(statusPageUrl, DEFAULT_TIMEOUT_MS);
+    const normalized = normalizeFromHtml(html);
     return {
       service: serviceName,
-      status: 'unknown',
-      lastChecked: new Date(),
-      source: 'reports',
-      message: 'Failed to fetch status'
+      status: normalized,
+      source: normalized === "unknown" ? "unknown" : "official",
+      statusPageUrl,
+      lastChecked,
+      details: provider === "unknown" ? "HTML heuristic" : `${provider} HTML heuristic`,
+    };
+  } catch (err: any) {
+    return {
+      service: serviceName,
+      status: "unknown",
+      source: "unknown",
+      statusPageUrl,
+      lastChecked,
+      details: `Fetch failed: ${String(err?.message || err)}`,
     };
   }
 }
 
 /**
- * Check Statuspage.io based status pages (Discord, GitHub, etc.)
- */
-async function checkStatuspageIo(
-  serviceName: string,
-  url: string
-): Promise<LiveStatusResult> {
-  
-  // Most Statuspage.io pages have an API endpoint at /api/v2/status.json
-  const apiUrl = url.replace(/\/$/, '') + '/api/v2/status.json';
-  
-  const response = await fetch(apiUrl, {
-    headers: { 'User-Agent': 'ServiceStatusNow/1.0' },
-    next: { revalidate: 60 } // Cache for 60 seconds
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Statuspage.io format: { status: { indicator: "none" | "minor" | "major" | "critical" } }
-  const indicator = data?.status?.indicator || 'unknown';
-  
-  const statusMap: Record<string, LiveStatusResult['status']> = {
-    'none': 'operational',
-    'minor': 'degraded',
-    'major': 'outage',
-    'critical': 'outage',
-    'maintenance': 'maintenance'
-  };
-  
-  return {
-    service: serviceName,
-    status: statusMap[indicator] || 'unknown',
-    lastChecked: new Date(),
-    source: 'official',
-    message: data?.status?.description
-  };
-}
-
-/**
- * Check JSON API endpoints
- */
-async function checkJsonApi(
-  serviceName: string,
-  url: string
-): Promise<LiveStatusResult> {
-  
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'ServiceStatusNow/1.0' },
-    next: { revalidate: 60 }
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Try to extract status from common JSON formats
-  const status = data?.status || data?.state || data?.indicator || 'unknown';
-  
-  return {
-    service: serviceName,
-    status: normalizeStatus(status),
-    lastChecked: new Date(),
-    source: 'official'
-  };
-}
-
-/**
- * Generic HTML page scraping (fallback)
- */
-async function checkGenericPage(
-  serviceName: string,
-  url: string
-): Promise<LiveStatusResult> {
-  
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'ServiceStatusNow/1.0' },
-    next: { revalidate: 60 }
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  
-  const html = await response.text();
-  
-  // Simple pattern matching for common status indicators
-  if (/all systems operational|everything is working|no issues/i.test(html)) {
-    return {
-      service: serviceName,
-      status: 'operational',
-      lastChecked: new Date(),
-      source: 'official'
-    };
-  } else if (/degraded|slow|issues detected/i.test(html)) {
-    return {
-      service: serviceName,
-      status: 'degraded',
-      lastChecked: new Date(),
-      source: 'official'
-    };
-  } else if (/outage|down|offline|major incident/i.test(html)) {
-    return {
-      service: serviceName,
-      status: 'outage',
-      lastChecked: new Date(),
-      source: 'official'
-    };
-  }
-  
-  return {
-    service: serviceName,
-    status: 'unknown',
-    lastChecked: new Date(),
-    source: 'reports'
-  };
-}
-
-/**
- * Normalize various status string formats to our standard
- */
-function normalizeStatus(status: string): LiveStatusResult['status'] {
-  const normalized = status.toLowerCase();
-  
-  if (normalized.includes('operational') || normalized === 'ok' || normalized === 'up') {
-    return 'operational';
-  } else if (normalized.includes('degraded') || normalized.includes('minor')) {
-    return 'degraded';
-  } else if (normalized.includes('outage') || normalized.includes('down') || normalized.includes('major')) {
-    return 'outage';
-  } else if (normalized.includes('maintenance')) {
-    return 'maintenance';
-  }
-  
-  return 'unknown';
-}
-
-/**
- * Batch check multiple services
+ * Public: check a list of services at once.
  */
 export async function checkMultipleServices(
-  services: Array<{ name: string; statusPageUrl?: string }>
-): Promise<LiveStatusResult[]> {
-  
-  const promises = services.map(s => checkLiveStatus(s.name, s.statusPageUrl));
-  return await Promise.all(promises);
+  services: Array<{ name: string; statusPageUrl: string }>
+): Promise<StatusResult[]> {
+  return mapWithConcurrency(services, MAX_CONCURRENCY, async (s) => checkLiveStatus(s.name, s.statusPageUrl));
+}
+
+/* ----------------------------- Provider logic ----------------------------- */
+
+function detectProvider(statusPageUrl: string): Provider {
+  const u = safeUrl(statusPageUrl);
+  if (!u) return "unknown";
+
+  const host = u.hostname.toLowerCase();
+
+  // Atlassian Statuspage usually uses these patterns and supports /api/v2/summary.json
+  // Many branded status sites still are Statuspage under the hood.
+  if (
+    host.includes("statuspage.io") ||
+    host.includes("githubstatus.com") ||
+    host.includes("cloudflarestatus.com") ||
+    host.includes("discordstatus.com") ||
+    host.includes("redditstatus.com") ||
+    host.includes("netlifystatus.com") ||
+    host.includes("status.zoom.us") ||
+    host.includes("status.dropbox.com") ||
+    host.includes("status.figma.com") ||
+    host.includes("status.notion.so") ||
+    host.includes("status.stripe.com") ||
+    host.includes("status.twitch.tv") ||
+    host.includes("vercel-status.com")
+  ) {
+    return "atlassian_statuspage";
+  }
+
+  if (host.includes("instatus.com")) return "instatus";
+  if (host.includes("betterstack.com")) return "betterstack";
+  if (host.includes("cachethq.io") || host.includes("cachet")) return "cachet";
+  if (host.includes("status.io")) return "statusio";
+
+  return "unknown";
+}
+
+async function tryProviderJson(
+  provider: Provider,
+  statusPageUrl: string,
+  serviceName: string
+): Promise<StatusResult | null> {
+  const lastChecked = new Date().toISOString();
+
+  if (provider === "atlassian_statuspage") {
+    // Statuspage API v2: /api/v2/summary.json or /api/v2/status.json
+    const summaryUrl = joinUrl(statusPageUrl, "/api/v2/summary.json");
+    const statusUrl = joinUrl(statusPageUrl, "/api/v2/status.json");
+
+    // Try summary first (has overall + components)
+    const summary = await safeFetchJson<any>(summaryUrl, DEFAULT_TIMEOUT_MS).catch(() => null);
+    if (summary) {
+      const indicator: string | undefined =
+        summary?.status?.indicator || summary?.page?.status_indicator || summary?.status?.description;
+      const desc: string | undefined = summary?.status?.description;
+
+      const status = normalizeFromStatuspageIndicator(indicator, desc);
+      return {
+        service: serviceName,
+        status,
+        source: status === "unknown" ? "unknown" : "official",
+        statusPageUrl,
+        httpStatus: 200,
+        lastChecked,
+        details: "Statuspage summary.json",
+      };
+    }
+
+    // Fallback to status.json
+    const statusJson = await safeFetchJson<any>(statusUrl, DEFAULT_TIMEOUT_MS).catch(() => null);
+    if (statusJson) {
+      const indicator: string | undefined = statusJson?.status?.indicator;
+      const desc: string | undefined = statusJson?.status?.description;
+      const status = normalizeFromStatuspageIndicator(indicator, desc);
+      return {
+        service: serviceName,
+        status,
+        source: status === "unknown" ? "unknown" : "official",
+        statusPageUrl,
+        httpStatus: 200,
+        lastChecked,
+        details: "Statuspage status.json",
+      };
+    }
+
+    return null;
+  }
+
+  if (provider === "instatus") {
+    // Instatus often has /api/summary (not universal); try a couple common ones.
+    const candidates = [
+      joinUrl(statusPageUrl, "/api/summary"),
+      joinUrl(statusPageUrl, "/api/status"),
+      joinUrl(statusPageUrl, "/api/v1/status"),
+    ];
+
+    for (const url of candidates) {
+      const j = await safeFetchJson<any>(url, DEFAULT_TIMEOUT_MS).catch(() => null);
+      if (!j) continue;
+
+      const raw = (j?.status || j?.page?.status || j?.summary?.status || "").toString().toLowerCase();
+      const status = normalizeSimpleWord(raw);
+      return {
+        service: serviceName,
+        status,
+        source: status === "unknown" ? "unknown" : "official",
+        statusPageUrl,
+        httpStatus: 200,
+        lastChecked,
+        details: "Instatus JSON",
+      };
+    }
+    return null;
+  }
+
+  if (provider === "betterstack") {
+    // Better Stack has APIs but often needs auth; treat as unknown unless HTML works.
+    return null;
+  }
+
+  if (provider === "cachet") {
+    // Cachet: /api/v1/status
+    const url = joinUrl(statusPageUrl, "/api/v1/status");
+    const j = await safeFetchJson<any>(url, DEFAULT_TIMEOUT_MS).catch(() => null);
+    if (!j) return null;
+
+    // Cachet returns { data: { indicator: "none|minor|major|critical", description: "..." } }
+    const indicator = (j?.data?.indicator || "").toString().toLowerCase();
+    const desc = (j?.data?.description || "").toString();
+    const status = normalizeCachetIndicator(indicator, desc);
+    return {
+      service: serviceName,
+      status,
+      source: status === "unknown" ? "unknown" : "official",
+      statusPageUrl,
+      httpStatus: 200,
+      lastChecked,
+      details: "Cachet /api/v1/status",
+    };
+  }
+
+  if (provider === "statusio") {
+    // status.io typically requires API keys for JSON; fallback to HTML.
+    return null;
+  }
+
+  return null;
+}
+
+/* ----------------------------- Normalization ----------------------------- */
+
+function normalizeFromStatuspageIndicator(indicator?: string, description?: string): ServiceStatus {
+  const i = (indicator || "").toLowerCase().trim();
+  const d = (description || "").toLowerCase().trim();
+
+  // Statuspage indicator values: none, minor, major, critical, maintenance (varies)
+  if (i === "none") return "operational";
+  if (i === "minor") return "degraded";
+  if (i === "major") return "major_outage";
+  if (i === "critical") return "major_outage";
+  if (i === "maintenance") return "maintenance";
+
+  // Sometimes only description is meaningful
+  return normalizeFromText(`${i} ${d}`);
+}
+
+function normalizeCachetIndicator(indicator?: string, description?: string): ServiceStatus {
+  const i = (indicator || "").toLowerCase().trim();
+  if (i === "none") return "operational";
+  if (i === "minor") return "degraded";
+  if (i === "major") return "major_outage";
+  if (i === "critical") return "major_outage";
+  return normalizeFromText(`${i} ${description || ""}`);
+}
+
+function normalizeFromHtml(html: string): ServiceStatus {
+  // Keep it simple: scan for common phrases on many status pages.
+  const text = stripHtml(html).toLowerCase();
+
+  // Strong signals
+  if (text.includes("all systems operational") || text.includes("all systems are operational")) return "operational";
+  if (text.includes("major outage") || text.includes("service disruption") || text.includes("service down"))
+    return "major_outage";
+  if (text.includes("partial outage")) return "partial_outage";
+  if (text.includes("degraded performance") || text.includes("performance issues") || text.includes("intermittent"))
+    return "degraded";
+  if (text.includes("maintenance") || text.includes("scheduled maintenance") || text.includes("under maintenance"))
+    return "maintenance";
+
+  // Some status sites show a colored label per component; look for common keywords.
+  const status = normalizeFromText(text);
+  return status;
+}
+
+function normalizeFromText(text: string): ServiceStatus {
+  const t = (text || "").toLowerCase();
+
+  // Operational
+  if (t.includes("operational") || t.includes("no incidents") || t.includes("working normally")) return "operational";
+
+  // Maintenance
+  if (t.includes("maintenance") || t.includes("scheduled")) return "maintenance";
+
+  // Outages
+  if (t.includes("critical") || t.includes("outage") || t.includes("down") || t.includes("unavailable"))
+    return "major_outage";
+
+  // Partial / degraded
+  if (t.includes("partial")) return "partial_outage";
+  if (t.includes("degraded") || t.includes("minor") || t.includes("intermittent") || t.includes("disruption"))
+    return "degraded";
+
+  return "unknown";
+}
+
+function normalizeSimpleWord(word: string): ServiceStatus {
+  const w = (word || "").toLowerCase().trim();
+  if (!w) return "unknown";
+  if (w.includes("operational") || w === "ok" || w === "up") return "operational";
+  if (w.includes("maintenance")) return "maintenance";
+  if (w.includes("partial")) return "partial_outage";
+  if (w.includes("degraded") || w.includes("minor")) return "degraded";
+  if (w.includes("outage") || w.includes("down") || w.includes("major") || w.includes("critical")) return "major_outage";
+  return "unknown";
+}
+
+/* ------------------------------ Fetch helpers ----------------------------- */
+
+async function safeFetchText(url: string, timeoutMs: number): Promise<string> {
+  const res = await safeFetch(url, timeoutMs);
+  const text = await res.text();
+  return text;
+}
+
+async function safeFetchJson<T>(url: string, timeoutMs: number): Promise<T> {
+  const res = await safeFetch(url, timeoutMs);
+  return (await res.json()) as T;
+}
+
+async function safeFetch(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "ServiceStatusNow/1.0 (+https://servicestatusnow.vercel.app)",
+        Accept: "text/html,application/json;q=0.9,*/*;q=0.8",
+      },
+      // Always fetch fresh (route-level caching is handled by Next.js revalidate/dynamic)
+      cache: "no-store",
+    });
+
+    return res;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/* ------------------------------ Misc helpers ------------------------------ */
+
+function safeUrl(input: string): URL | null {
+  try {
+    return new URL(input);
+  } catch {
+    return null;
+  }
+}
+
+function joinUrl(base: string, path: string): string {
+  const u = safeUrl(base);
+  if (!u) return base;
+  // Ensure base has no trailing slash duplication
+  const baseOrigin = `${u.protocol}//${u.host}`;
+  const basePath = u.pathname.replace(/\/+$/, "");
+  const full = `${baseOrigin}${basePath}${path.startsWith("/") ? path : `/${path}`}`;
+  return full;
+}
+
+function stripHtml(html: string): string {
+  // Very lightweight strip (good enough for heuristics)
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let idx = 0;
+
+  const workers = new Array(Math.max(1, limit)).fill(0).map(async () => {
+    while (true) {
+      const current = idx++;
+      if (current >= items.length) break;
+      results[current] = await mapper(items[current], current);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
 }
