@@ -1,3 +1,4 @@
+import { fetchLiveStatuses } from "@/lib/live-status";
 import { Header } from '@/components/header'
 import { Footer } from '@/components/footer'
 import { SearchBar } from '@/components/search-bar'
