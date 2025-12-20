@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import { fetchLiveStatuses } from "@/lib/live-status";
 import { Header } from '@/components/header'
 import { Footer } from '@/components/footer'
@@ -407,7 +408,7 @@ export default async function Home() {
                   left: `${5 + i * 6}%`,
                   '--duration': `${15 + Math.random() * 20}s`,
                   '--delay': `${Math.random() * 10}s`,
-                } as React.CSSProperties}
+                } as CSSProperties}
               />
             ))}
           </div>
@@ -468,7 +469,7 @@ export default async function Home() {
               <div className="ticker-scroll flex gap-8 whitespace-nowrap" style={{ width: 'max-content' }}>
                 {[...Array(2)].map((_, setIndex) => (
                   <div key={setIndex} className="flex gap-8">
-                    {tickerItems.map((item, i) => (
+                    {tickerItems.map((item) => (
                       <div key={`${item.slug}-${setIndex}`} className="flex items-center gap-2">
                         <span
                           className={`dot-pulse w-2 h-2 ${dotColorClass(item.status)} rounded-full`}
@@ -555,7 +556,7 @@ export default async function Home() {
                   offsetPath: 'path("M0,140 Q300,100 600,130 Q900,160 1200,120")',
                   '--travel-time': '6s',
                   '--travel-delay': '0s'
-                } as React.CSSProperties}
+                } as CSSProperties}
               />
               <circle
                 className="data-packet"
@@ -565,7 +566,7 @@ export default async function Home() {
                   offsetPath: 'path("M0,160 Q400,120 800,150 Q1000,170 1200,140")',
                   '--travel-time': '8s',
                   '--travel-delay': '2s'
-                } as React.CSSProperties}
+                } as CSSProperties}
               />
               <circle
                 className="data-packet"
@@ -575,7 +576,7 @@ export default async function Home() {
                   offsetPath: 'path("M1200,130 Q900,100 600,140 Q300,170 0,150")',
                   '--travel-time': '7s',
                   '--travel-delay': '4s'
-                } as React.CSSProperties}
+                } as CSSProperties}
               />
             </svg>
 
