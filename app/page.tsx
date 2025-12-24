@@ -2,7 +2,6 @@ import { Header } from '@/components/header'
 import { Footer } from '@/components/footer'
 import { SearchBar } from '@/components/search-bar'
 import { ServiceCard } from '@/components/service-card'
-import { getMostCheckedServices, getTrendingServices } from '@/lib/status'
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
@@ -17,11 +16,48 @@ export const metadata: Metadata = {
 
 export const revalidate = 60
 
+// Fetch live status data from our API
+async function getLiveStatuses() {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://servicestatusnow.vercel.app'
+    const response = await fetch(`${baseUrl}/api/status/live`, {
+      next: { revalidate: 60 },
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      console.error('Failed to fetch live statuses:', response.status)
+      return { services: [] }
+    }
+
+    const data = await response.json()
+    return data
+  } catch (error) {
+    console.error('Error fetching live statuses:', error)
+    return { services: [] }
+  }
+}
+
+// Get services with issues (not operational)
+function getTrendingServices(services: any[], limit: number = 12) {
+  return services
+    .filter(s => s.status !== 'operational' && s.status !== 'unknown')
+    .slice(0, limit)
+}
+
+// Get most popular/checked services
+function getMostCheckedServices(services: any[], limit: number = 12) {
+  return services.slice(0, limit)
+}
+
 export default async function Home() {
-  const [mostChecked, trending] = await Promise.all([
-    getMostCheckedServices(12),
-    getTrendingServices(12),
-  ])
+  const liveData = await getLiveStatuses()
+  const allServices = liveData.services || []
+  
+  const mostChecked = getMostCheckedServices(allServices, 12)
+  const trending = getTrendingServices(allServices, 12)
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -189,76 +225,34 @@ export default async function Home() {
             box-shadow: 0 0 0 1px var(--accent), 0 0 20px var(--accent-glow);
           }
           50% { 
-            box-shadow: 0 0 0 1px var(--accent), 0 0 30px var(--accent-glow), 0 0 50px var(--accent-glow);
+            box-shadow: 0 0 0 2px var(--accent), 0 0 30px var(--accent-glow), 0 0 40px var(--accent-glow);
           }
         }
         
         .search-glow {
-          animation: border-glow 3s ease-in-out infinite;
+          animation: border-glow 2s ease-in-out infinite;
         }
         
-        /* Grid background */
-        @keyframes grid-fade {
-          0%, 100% { opacity: 0.03; }
-          50% { opacity: 0.06; }
+        /* Gradient flow */
+        @keyframes gradient-flow {
+          0%, 100% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
         }
         
-        .grid-bg {
-          background-image: 
-            linear-gradient(rgba(59, 130, 246, 0.05) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(59, 130, 246, 0.05) 1px, transparent 1px);
-          background-size: 60px 60px;
-          animation: grid-fade 8s ease-in-out infinite;
-        }
-        
-        /* Gradient orb */
-        @keyframes gradient-shift {
-          0%, 100% { opacity: 0.3; }
-          50% { opacity: 0.5; }
-        }
-        
-        .gradient-orb {
-          animation: gradient-shift 10s ease-in-out infinite;
-        }
-        
-        /* Node appear */
-        @keyframes node-appear {
-          0% { 
-            transform: scale(0);
-            opacity: 0;
-          }
-          50% {
-            transform: scale(1.3);
-          }
-          100% { 
-            transform: scale(1);
-            opacity: 1;
-          }
-        }
-        
-        .node-appear {
-          animation: node-appear 0.5s ease-out forwards;
-        }
-        
-        /* Ticker scroll */
-        @keyframes ticker-scroll {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        
-        .ticker-scroll {
-          animation: ticker-scroll 30s linear infinite;
+        .gradient-flow {
+          background-size: 200% 200%;
+          animation: gradient-flow 5s ease infinite;
         }
         
         /* Network node pulse */
         @keyframes network-pulse {
           0%, 100% {
-            transform: scale(1);
-            opacity: 0.8;
+            opacity: 1;
+            r: 4;
           }
           50% {
-            transform: scale(1.1);
-            opacity: 1;
+            opacity: 0.6;
+            r: 6;
           }
         }
         
@@ -267,149 +261,118 @@ export default async function Home() {
         }
         
         /* Data packet travel */
-        @keyframes packet-travel {
-          0% {
-            offset-distance: 0%;
-            opacity: 0;
-          }
-          10% {
-            opacity: 1;
-          }
-          90% {
-            opacity: 1;
-          }
-          100% {
-            offset-distance: 100%;
-            opacity: 0;
-          }
+        @keyframes data-travel {
+          0% { offset-distance: 0%; opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { offset-distance: 100%; opacity: 0; }
         }
         
         .data-packet {
-          offset-rotate: 0deg;
-          animation: packet-travel var(--travel-time, 4s) linear infinite;
+          animation: data-travel var(--travel-time, 5s) linear infinite;
           animation-delay: var(--travel-delay, 0s);
         }
         
         /* Connection line pulse */
         @keyframes line-pulse {
-          0%, 100% { opacity: 0.15; }
+          0%, 100% { opacity: 0.2; }
           50% { opacity: 0.4; }
         }
         
-        .connection-line {
-          animation: line-pulse 4s ease-in-out infinite;
+        .connection-line line {
+          animation: line-pulse 3s ease-in-out infinite;
         }
-      `}} />
+      ` }} />
       
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+      
       <Header />
-      <main className="flex-1">
-        {/* HERO SECTION */}
-        <div className="relative overflow-hidden min-h-[650px] sm:min-h-[750px] flex items-center bg-[#0a0a0f]">
-          
-          {/* Grid background */}
-          <div className="absolute inset-0 grid-bg" />
-          
-          {/* Gradient orbs */}
-          <div className="gradient-orb absolute top-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-blue-500/10 blur-[120px]" />
-          <div className="gradient-orb absolute bottom-[-30%] left-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/5 blur-[100px]" style={{ animationDelay: '-5s' }} />
-          
+      <main className="flex-grow relative">
+        {/* Hero section */}
+        <div className="relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0a0a0f 0%, #12121a 50%, #0a0a0f 100%)' }}>
           {/* Floating particles */}
           <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {[...Array(15)].map((_, i) => (
+            {[...Array(12)].map((_, i) => (
               <div
                 key={i}
-                className="particle absolute w-1 h-1 bg-blue-400/60 rounded-full"
+                className="particle absolute w-1 h-1 bg-blue-400/40 rounded-full"
                 style={{
-                  left: `${5 + i * 6}%`,
-                  '--duration': `${15 + Math.random() * 20}s`,
+                  left: `${Math.random() * 100}%`,
+                  '--duration': `${15 + Math.random() * 15}s`,
                   '--delay': `${Math.random() * 10}s`,
                 } as React.CSSProperties}
               />
             ))}
           </div>
           
-          {/* Radar element */}
-          <div className="absolute right-[5%] top-1/2 -translate-y-1/2 w-[300px] h-[300px] sm:w-[400px] sm:h-[400px] opacity-30 pointer-events-none hidden lg:block">
-            <div className="absolute inset-0 rounded-full border border-blue-500/20" />
-            <div className="absolute inset-[15%] rounded-full border border-blue-500/30" />
-            <div className="absolute inset-[30%] rounded-full border border-blue-500/40" />
-            <div className="absolute inset-[45%] rounded-full border border-blue-500/50" />
-            
-            <div className="absolute inset-[48%] rounded-full bg-blue-500" style={{ boxShadow: '0 0 20px #3b82f6, 0 0 40px #3b82f6' }} />
-            
-            <div className="radar-ping absolute inset-[45%] rounded-full border-2 border-blue-400" />
-            <div className="radar-ping radar-ping-delay-1 absolute inset-[45%] rounded-full border-2 border-blue-400" />
-            <div className="radar-ping radar-ping-delay-2 absolute inset-[45%] rounded-full border-2 border-blue-400" />
-            
-            <div className="radar-sweep absolute inset-0" style={{ transformOrigin: 'center center' }}>
-              <div className="absolute top-1/2 left-1/2 w-1/2 h-[2px] origin-left bg-gradient-to-r from-blue-400 to-transparent" />
-            </div>
-            
-            <div className="node-appear absolute top-[20%] left-[60%] w-2 h-2 bg-green-500 rounded-full" style={{ animationDelay: '1s', boxShadow: '0 0 10px #22c55e' }} />
-            <div className="node-appear absolute top-[40%] left-[25%] w-2 h-2 bg-green-500 rounded-full" style={{ animationDelay: '1.5s', boxShadow: '0 0 10px #22c55e' }} />
-            <div className="node-appear absolute top-[70%] left-[55%] w-2 h-2 bg-yellow-500 rounded-full" style={{ animationDelay: '2s', boxShadow: '0 0 10px #eab308' }} />
-            <div className="node-appear absolute top-[55%] left-[75%] w-2 h-2 bg-green-500 rounded-full" style={{ animationDelay: '2.5s', boxShadow: '0 0 10px #22c55e' }} />
-          </div>
-          
-          {/* Main content */}
-          <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center py-16 lg:text-left lg:ml-[10%]">
-            
-            {/* HEADLINE - Clean, bold, readable */}
-            <h1 
-              className="fade-in-up text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight"
-              style={{ fontFamily: 'Poppins, sans-serif' }}
-            >
-              Check If A Website Or App Is{' '}
-              <span className="shimmer-text">Down Right Now</span>
-            </h1>
-            
-            {/* SUBTITLE */}
-            <p 
-              className="fade-in-up-delay-1 text-lg sm:text-xl text-gray-400 max-w-xl mb-10 lg:mx-0 mx-auto"
-              style={{ fontFamily: 'Poppins, sans-serif', fontWeight: 400 }}
-            >
-              Real-time outage detection & live status updates for thousands of services worldwide.
-            </p>
-            
-            {/* Search bar */}
-            <div className="fade-in-up-delay-2 max-w-xl mx-auto lg:mx-0 relative">
-              <div className="search-glow absolute -inset-[1px] rounded-xl bg-blue-500/20" />
-              <div className="relative bg-[#12121a] rounded-xl border border-blue-500/30">
-                <SearchBar size="lg" placeholder="Search for a service (e.g., Twitter, Gmail, Netflix)..." />
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-28 relative">
+            {/* Radar animation container */}
+            <div className="absolute top-12 right-12 w-[200px] h-[200px] opacity-20 pointer-events-none hidden lg:block">
+              <div className="relative w-full h-full">
+                <div className="absolute inset-0 border-2 border-blue-500/30 rounded-full" />
+                <div className="absolute inset-4 border border-blue-500/20 rounded-full radar-ping" />
+                <div className="absolute inset-4 border border-blue-500/20 rounded-full radar-ping radar-ping-delay-1" />
+                <div className="absolute inset-4 border border-blue-500/20 rounded-full radar-ping radar-ping-delay-2" />
+                
+                <svg className="absolute inset-0 w-full h-full radar-sweep" viewBox="0 0 100 100">
+                  <defs>
+                    <linearGradient id="radarGradient" x1="50%" y1="50%" x2="50%" y2="0%">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0" />
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.6" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M 50 50 L 50 0 A 50 50 0 0 1 100 50 Z"
+                    fill="url(#radarGradient)"
+                  />
+                </svg>
+                
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+                  <div className="w-3 h-3 bg-blue-500 rounded-full pulse-glow" />
+                </div>
               </div>
             </div>
             
-            {/* Status ticker */}
-            <div className="fade-in-up-delay-3 mt-8 overflow-hidden max-w-xl mx-auto lg:mx-0">
-              <div className="ticker-scroll flex gap-8 whitespace-nowrap" style={{ width: 'max-content' }}>
-                {[...Array(2)].map((_, setIndex) => (
-                  <div key={setIndex} className="flex gap-8">
+            <div className="text-center relative">
+              <h1 
+                className="fade-in-up text-4xl sm:text-5xl lg:text-6xl font-extrabold mb-6"
+                style={{ fontFamily: 'Poppins, sans-serif' }}
+              >
+                <span className="shimmer-text block mb-2">
+                  Is it down?
+                </span>
+                <span className="text-white">
+                  Check any service status
+                </span>
+              </h1>
+              
+              <p 
+                className="fade-in-up-delay-1 text-lg sm:text-xl text-gray-400 mb-12 max-w-2xl mx-auto leading-relaxed"
+                style={{ fontFamily: 'Poppins, sans-serif' }}
+              >
+                Real-time outage detection for 200+ websites and apps. Know instantly if the problem is on your end or theirs.
+              </p>
+              
+              <div className="fade-in-up-delay-2 max-w-2xl mx-auto mb-12">
+                <SearchBar />
+              </div>
+              
+              <div className="fade-in-up-delay-3 inline-flex items-center gap-8 px-6 py-4 bg-[#12121a]/60 backdrop-blur-sm border border-blue-500/10 rounded-2xl">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex flex-col sm:flex-row items-center gap-4">
                     <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Netflix: Operational</span>
+                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: `${i}s` }} />
+                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Discord: Operational</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-yellow-500 rounded-full" style={{ boxShadow: '0 0 8px #eab308', animationDelay: '0.5s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Discord: Degraded</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: '1s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>AWS: Operational</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-red-500 rounded-full" style={{ boxShadow: '0 0 8px #ef4444', animationDelay: '1.5s' }} />
-                      <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Xbox Live: Outage</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: '2s' }} />
+                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: `${i + 1.5}s` }} />
                       <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Google: Operational</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: '2.5s' }} />
+                      <span className="dot-pulse w-2 h-2 bg-green-500 rounded-full" style={{ boxShadow: '0 0 8px #22c55e', animationDelay: `${i + 2.5}s` }} />
                       <span className="text-sm text-gray-400" style={{ fontFamily: 'Poppins, sans-serif' }}>Spotify: Operational</span>
                     </div>
                   </div>
@@ -561,7 +524,7 @@ export default async function Home() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {mostChecked.map((service) => (
-                    <ServiceCard key={service.id} service={service} />
+                    <ServiceCard key={service.slug} service={service} />
                   ))}
                 </div>
               )}
@@ -582,7 +545,7 @@ export default async function Home() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {trending.map((service) => (
-                    <ServiceCard key={service.id} service={service} showTrend={true} />
+                    <ServiceCard key={service.slug} service={service} showTrend={true} />
                   ))}
                 </div>
               )}
